@@ -109,6 +109,9 @@ input:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .badge.RHYTHM { background: #faead9; color: #9a5715; }
 .badge.FINGERING { background: #e2edf8; color: #2d659b; }
 .badge.EMOTION { background: #eee7f5; color: #68458c; }
+.badge-success { background: #dff1e8; color: #24644a; }
+.badge-warning { background: #faf0d8; color: #8a6114; }
+.badge-danger { background: #f8e5e1; color: #93372d; }
 .empty { padding: 44px 24px; text-align: center; border: 1px dashed #bfcac6; border-radius: var(--radius); color: var(--muted); }
 .empty strong { display: block; margin-bottom: 8px; color: var(--ink); }
 .loading { padding: 24px; text-align: center; color: var(--muted); }

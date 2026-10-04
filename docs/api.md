@@ -136,3 +136,48 @@ Refresh Cookie 路径为 `/api/v1/auth`，生产环境在 HTTPS 下自动使用 
 | `/health/live` | 仅检查进程存活 |
 | `/health/ready` | 检查 PostgreSQL、Redis 和对象存储 |
 | `/metrics` | Prometheus 文本指标 |
+
+## 合奏排练协调
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET/POST | `/ensembles` | 合奏团列表 / 创建（创建者自动成为 OWNER） |
+| GET/PATCH | `/ensembles/:ensembleId` | 详情（含声部成员）/ 乐观锁更新 |
+| GET/POST | `/ensembles/:ensembleId/members` | 声部成员列表（可按 `part` 过滤）/ 邮箱邀请 |
+| PATCH/DELETE | `/ensembles/:ensembleId/members/:memberId` | 调整声部/角色 / 软移除 |
+| GET/POST | `/ensembles/:ensembleId/rehearsals` | 排练列表（光标分页）/ 创建 |
+| GET/PATCH | `/rehearsals/:rehearsalId` | 排练汇总 / 乐观锁更新 |
+| POST | `/rehearsals/:rehearsalId/cancel` | 取消排练 |
+| PUT | `/rehearsals/:rehearsalId/attendance` | 批量点名（乐观锁 + 幂等） |
+| POST | `/rehearsals/:rehearsalId/bar-tasks` | 新建小节任务 |
+| PATCH/DELETE | `/bar-tasks/:barTaskId` | 更新小节任务（含指派人）/ 删除 |
+| POST | `/bar-tasks/:barTaskId/confirm` | 成员确认小节完成（可带 `Idempotency-Key`） |
+| POST | `/rehearsals/:rehearsalId/sync` | 离线事件批量合并 |
+| GET | `/notifications` | 当前用户通知收件箱（含 `unreadCount`） |
+| POST | `/notifications/:id/read` | 标记已读 |
+
+### 排练汇总口径
+
+`GET /rehearsals/:id` 一次返回 `members`（声部与出勤）、`barTasks`（含每个任务的 `progress`）与
+`rollup` 汇总。完成度分母**只包含被指派且实际出席（`PRESENT`/`LATE`）的成员**：
+
+- `ABSENT`、`EXCUSED` 与未点名（`UNKNOWN`）的被指派人进入 `excludedAssignees`，绝不计入分母；
+- 缺席成员的打卡既不会抬高也不会拉低完成度；
+- 分母为 0（任务取消、无人出席或未指派）时 `completionRatio` 为 `null`，
+  客户端必须展示“暂不可统计”，不能当作 0% 或 100%；
+- 只要有一个小节任务不可统计，整场 `overallCompletionRatio` 即为 `null`。
+
+### 通知变更幂等
+
+变更先写 `rehearsal_change_events`，再按成员展开通知。事件指纹为
+`SHA256(rehearsalId | kind | targetMemberId | 规范化 payload)`，`(rehearsal_id, fingerprint)`
+唯一；写接口同时接受 `Idempotency-Key` 头并做全局唯一。同语义变更重放（含并发穿透唯一约束冲突）
+只复用原事件，不产生重复通知。
+
+### 离线确认合并
+
+- 每条事件携带客户端生成的 `clientEventId`（≥8 字符）与事件发生时间 `occurredAt`；
+- 同一 `clientEventId` 重放（包括它曾被更新事件 LWW 覆盖的情况）返回 `replayed`，不复活旧值；
+- 不同设备对同一出勤/确认的并发写按 `occurredAt` last-writer-wins，时间戳相同时按
+  `clientEventId` 字典序破平，保证多端收敛；冲突结果在响应 `conflicts` 中明示；
+- `/sync` 整批校验、整批事务提交，不产生半写入。

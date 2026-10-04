@@ -81,6 +81,230 @@ enum GoalStatus {
   CANCELLED
 }
 
+enum EnsembleMemberRole {
+  OWNER
+  MEMBER
+}
+
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  ABSENT
+  EXCUSED
+  UNKNOWN
+}
+
+enum BarTaskStatus {
+  OPEN
+  DONE
+  CANCELLED
+}
+
+enum RehearsalChangeKind {
+  REHEARSAL_CREATED
+  REHEARSAL_UPDATED
+  REHEARSAL_CANCELLED
+  ATTENDANCE_CHANGED
+  BAR_TASK_CREATED
+  BAR_TASK_UPDATED
+  BAR_TASK_DELETED
+  BAR_TASK_CONFIRMED
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  SENT
+  READ
+}
+
+model Ensemble {
+  id          String             @id @default(uuid()) @db.Uuid
+  ownerId     String             @map("owner_id") @db.Uuid
+  name        String             @db.VarChar(120)
+  description String?
+  version     Int                @default(0)
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  owner       User               @relation("EnsembleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members     EnsembleMember[]
+  rehearsals  Rehearsal[]
+
+  @@map("ensembles")
+}
+
+model EnsembleMember {
+  id          String      @id @default(uuid()) @db.Uuid
+  ensembleId  String      @map("ensemble_id") @db.Uuid
+  userId      String      @map("user_id") @db.Uuid
+  part        String?     @db.VarChar(60)
+  role        EnsembleMemberRole @default(MEMBER)
+  active      Boolean     @default(true)
+  version     Int         @default(0)
+  joinedAt    DateTime    @default(now()) @map("joined_at") @db.Timestamptz(6)
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  ensemble    Ensemble    @relation(fields: [ensembleId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attendances RehearsalAttendance[]
+  assignments BarTaskAssignee[]
+  checkins    BarTaskCheckin[]
+  notifications RehearsalNotification[]
+
+  @@unique([ensembleId, userId])
+  @@index([ensembleId, active])
+  @@map("ensemble_members")
+}
+
+model Rehearsal {
+  id             String    @id @default(uuid()) @db.Uuid
+  ensembleId     String    @map("ensemble_id") @db.Uuid
+  title          String    @db.VarChar(120)
+  scheduledStart DateTime  @map("scheduled_start") @db.Timestamptz(6)
+  scheduledEnd   DateTime  @map("scheduled_end") @db.Timestamptz(6)
+  location       String?   @db.VarChar(120)
+  notes          String?
+  cancelledAt    DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  version        Int       @default(0)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  ensemble       Ensemble  @relation(fields: [ensembleId], references: [id], onDelete: Cascade)
+  attendances    RehearsalAttendance[]
+  barTasks       BarTask[]
+  changeEvents   RehearsalChangeEvent[]
+  notifications  RehearsalNotification[]
+  processedEvents RehearsalProcessedEvent[]
+
+  @@index([ensembleId, scheduledStart])
+  @@map("rehearsals")
+}
+
+model RehearsalAttendance {
+  id            String           @id @default(uuid()) @db.Uuid
+  rehearsalId   String           @map("rehearsal_id") @db.Uuid
+  memberId      String           @map("member_id") @db.Uuid
+  status        AttendanceStatus @default(UNKNOWN)
+  note          String?          @db.VarChar(500)
+  clientEventId String?          @map("client_event_id") @db.VarChar(80)
+  occurredAt    DateTime         @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rehearsal     Rehearsal        @relation(fields: [rehearsalId], references: [id], onDelete: Cascade)
+  member        EnsembleMember   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([rehearsalId, memberId])
+  @@unique([rehearsalId, clientEventId], name: "attendance_event_idempotency")
+  @@index([rehearsalId, status])
+  @@map("rehearsal_attendances")
+}
+
+model BarTask {
+  id           String       @id @default(uuid()) @db.Uuid
+  rehearsalId  String       @map("rehearsal_id") @db.Uuid
+  startBar     Int          @map("start_bar")
+  endBar       Int          @map("end_bar")
+  title        String       @db.VarChar(120)
+  instruction  String?
+  status       BarTaskStatus @default(OPEN)
+  version      Int          @default(0)
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rehearsal    Rehearsal    @relation(fields: [rehearsalId], references: [id], onDelete: Cascade)
+  assignees    BarTaskAssignee[]
+  checkins     BarTaskCheckin[]
+
+  @@index([rehearsalId, startBar])
+  @@map("bar_tasks")
+}
+
+model BarTaskAssignee {
+  id         String        @id @default(uuid()) @db.Uuid
+  barTaskId  String        @map("bar_task_id") @db.Uuid
+  memberId   String        @map("member_id") @db.Uuid
+  assignedAt DateTime      @default(now()) @map("assigned_at") @db.Timestamptz(6)
+  barTask    BarTask       @relation(fields: [barTaskId], references: [id], onDelete: Cascade)
+  member     EnsembleMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([barTaskId, memberId])
+  @@index([memberId])
+  @@map("bar_task_assignees")
+}
+
+model BarTaskCheckin {
+  id            String    @id @default(uuid()) @db.Uuid
+  barTaskId     String    @map("bar_task_id") @db.Uuid
+  memberId      String    @map("member_id") @db.Uuid
+  done          Boolean
+  note          String?   @db.VarChar(1000)
+  clientEventId String?   @map("client_event_id") @db.VarChar(80)
+  occurredAt    DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  barTask       BarTask   @relation(fields: [barTaskId], references: [id], onDelete: Cascade)
+  member        EnsembleMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([barTaskId, memberId])
+  @@unique([barTaskId, clientEventId], name: "checkin_event_idempotency")
+  @@index([barTaskId, done])
+  @@map("bar_task_checkins")
+}
+
+/// 变更事件账本：同一 (rehearsal_id, fingerprint) 唯一，保证通知变更幂等。
+/// 客户端重放（同 Idempotency-Key 或同语义变更）在该约束上短路。
+model RehearsalChangeEvent {
+  id              String               @id @default(uuid()) @db.Uuid
+  rehearsalId     String               @map("rehearsal_id") @db.Uuid
+  actorMemberId   String?              @map("actor_member_id") @db.Uuid
+  kind            RehearsalChangeKind
+  /// 规范化后的语义指纹（kind + target + payload），用于同语义去重
+  fingerprint     String               @db.Char(64)
+  /// 客户端幂等键，同用户/合奏团下唯一
+  idempotencyKey  String?              @unique(map: "change_event_idempotency_key") @map("idempotency_key") @db.VarChar(80)
+  /// 触发该变更时的排练版本，便于增量同步
+  versionSnapshot Int                  @map("version_snapshot")
+  payload         Json?
+  createdAt       DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  rehearsal       Rehearsal            @relation(fields: [rehearsalId], references: [id], onDelete: Cascade)
+  notifications   RehearsalNotification[]
+
+  @@unique([rehearsalId, fingerprint], name: "change_event_fingerprint")
+  @@index([rehearsalId, createdAt])
+  @@map("rehearsal_change_events")
+}
+
+/// 每个成员的通知收件箱：事件去重后按成员展开，重复事件不产生新行。
+model RehearsalNotification {
+  id            String                     @id @default(uuid()) @db.Uuid
+  rehearsalId   String                     @map("rehearsal_id") @db.Uuid
+  changeEventId String                     @map("change_event_id") @db.Uuid
+  recipientId   String                     @map("recipient_id") @db.Uuid
+  status        NotificationDeliveryStatus @default(PENDING)
+  readAt        DateTime?                  @map("read_at") @db.Timestamptz(6)
+  createdAt     DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rehearsal     Rehearsal                  @relation(fields: [rehearsalId], references: [id], onDelete: Cascade)
+  changeEvent   RehearsalChangeEvent       @relation(fields: [changeEventId], references: [id], onDelete: Cascade)
+  recipient     EnsembleMember             @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@unique([changeEventId, recipientId])
+  @@index([recipientId, status, createdAt])
+  @@map("rehearsal_notifications")
+}
+
+/// 离线事件幂等账本：每个处理过的 clientEventId（含 LWW 落败者）留痕，
+/// 保证“事件被更新事件覆盖后原设备重试”仍被识别为重放。
+model RehearsalProcessedEvent {
+  id           String   @id @default(uuid()) @db.Uuid
+  rehearsalId  String   @map("rehearsal_id") @db.Uuid
+  clientEventId String  @map("client_event_id") @db.VarChar(80)
+  kind         RehearsalChangeKind
+  processedAt  DateTime @default(now()) @map("processed_at") @db.Timestamptz(6)
+  rehearsal    Rehearsal @relation(fields: [rehearsalId], references: [id], onDelete: Cascade)
+
+  @@unique([rehearsalId, clientEventId])
+  @@index([rehearsalId, processedAt])
+  @@map("rehearsal_processed_events")
+}
+
 model User {
   id                String           @id @default(uuid()) @db.Uuid
   email             String           @unique @db.VarChar(254)
@@ -100,6 +324,8 @@ model User {
   goalProgresses    GoalProgress[]
   auditLogs         AuditLog[]
   dataExports       DataExport[]
+  ownedEnsembles    Ensemble[]       @relation("EnsembleOwner")
+  ensembleMemberships EnsembleMember[]
 
   @@map("users")
 }

@@ -17,6 +17,7 @@ const router = createRouter({
         { path: "sessions/:id/review", name: "session-review", component: () => import("../views/ReviewView.vue"), meta: { immersive: true } },
         { path: "sessions/:id", name: "session-detail", component: () => import("../views/SessionDetailView.vue") },
         { path: "goals", name: "goals", component: () => import("../views/GoalsView.vue") },
+        { path: "ensembles", name: "ensembles", component: () => import("../views/EnsembleView.vue") },
         { path: "statistics", name: "statistics", component: () => import("../views/StatisticsView.vue") },
         { path: "settings", name: "settings", component: () => import("../views/SettingsView.vue") },
       ],

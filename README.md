@@ -25,6 +25,7 @@ Vue 3 Web -> Fastify API -> PostgreSQL
 - `apps/api`：Fastify、Zod、Prisma、Argon2id、Refresh Token 轮换、S3 预签名上传。
 - `apps/worker`：BullMQ 音频探测、波形峰值、删除清理、逾期目标和数据导出。
 - `packages/contracts`：前后端共享的 Zod 请求约束与领域纯函数。
+- 合奏排练协调模块：声部成员汇总、点名到齐、小节任务分工与完成度；变更通知指纹幂等；离线确认按 `clientEventId` 去重 + LWW 合并，缺席/请假/未点名成员绝不计入完成度分母。
 - `infra/scripts`：测试音频生成脚本。
 
 ## 本地启动
