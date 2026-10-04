@@ -1,12 +1,22 @@
 <script setup lang="ts">
-import { annotationLabels, goalStatusLabels, sessionStatusLabels } from "../utils/format.js";
+import {
+  annotationLabels,
+  attendanceLabels,
+  barTaskStatusLabels,
+  goalStatusLabels,
+  rehearsalStatusLabels,
+  sessionStatusLabels,
+} from "../utils/format.js";
 
-const props = defineProps<{ value: string; kind?: "session" | "annotation" | "goal" | "media" }>();
+const props = defineProps<{ value: string }>();
 
 const labels: Record<string, string> = {
   ...sessionStatusLabels,
   ...goalStatusLabels,
   ...annotationLabels,
+  ...attendanceLabels,
+  ...rehearsalStatusLabels,
+  ...barTaskStatusLabels,
   PENDING_UPLOAD: "待上传",
   UPLOADING: "上传中",
   UPLOADED: "等待校验",

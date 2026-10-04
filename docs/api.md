@@ -129,6 +129,54 @@ Refresh Cookie 路径为 `/api/v1/auth`，生产环境在 HTTPS 下自动使用 
 
 统计接口必须传 `from`、`to` 和 IANA `timezone`。
 
+## 合奏排练协调
+
+成员声部、到齐状态与小节任务在同一汇总口径下维护。所有接口挂在 `/api/v1` 下，需要登录并属于对应合奏（组织者/指挥可写，普通成员只能管理本人到勤与自己被指派的任务）。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET/POST | `/ensembles` | 合奏列表 / 创建合奏（创建者自动成为 OWNER 成员） |
+| GET/PATCH | `/ensembles/:id` | 合奏详情（含成员与最近排练）/ 乐观锁更新 |
+| GET/POST | `/ensembles/:id/members` | 成员声部列表 / 添加成员（可关联已注册用户） |
+| PATCH/DELETE | `/ensembles/:id/members/:memberId` | 编辑声部角色 / 软移除（保留历史数据） |
+| GET/POST | `/ensembles/:id/rehearsals` | 排练列表 / 安排排练并为全员初始化 PENDING 到勤 |
+| GET/PATCH | `/rehearsals/:id` | 排练详情 / 乐观锁更新（自动发去重变更通知） |
+| POST | `/rehearsals/:id/transition` | 排练状态机：SCHEDULED→IN_PROGRESS→COMPLETED/CANCELLED |
+| GET | `/rehearsals/:id/summary` | **汇总：声部到齐 + 到勤计数 + 小节任务完成度** |
+| GET | `/rehearsals/:id/attendance` | 到勤列表 |
+| PUT | `/rehearsals/:id/attendance/me` | 成员在线回复 CONFIRMED/DECLINED |
+| POST | `/rehearsals/:id/attendance/me/sync` | **离线确认合并**（幂等键 + `clientUpdatedAt` LWW） |
+| POST | `/rehearsals/:id/attendance/:memberId/roll-call` | 组织者点名 PRESENT/LATE/ABSENT（幂等键） |
+| GET/POST | `/rehearsals/:id/bar-tasks` | 小节任务列表 / 创建并指派 |
+| PATCH | `/bar-tasks/:id` | 编辑任务（乐观锁） |
+| POST | `/bar-tasks/:id/status` | 任务状态推进（幂等键 + 乐观锁） |
+| GET | `/notifications` | 当前用户的变更通知收件箱（`unreadOnly`/光标分页） |
+| POST | `/notifications/read` | `{ "ids": [...] }` 或 `{ "all": true }`，幂等 |
+
+### 通知幂等
+
+- 每条通知有 `dedupe_key = rehearsalId:type:entityId:contentHash`，对 `rehearsal_notifications.dedupe_key` 建唯一约束；内容指纹不变的重复提交（重试、双击、离线回放）直接命中，绝不重复通知。
+- 请求级变更（点名、离线同步、任务状态）另需客户端提供 `idempotencyKey`（8–80 字符），服务端在 `idempotency_records` 记录首次结果；同键不同请求体返回 `409 IDEMPOTENCY_KEY_REUSE`，重放返回原结果并带 `x-idempotent-replay: true`。
+- 通知按每场排练单调递增 `changeSeq`，客户端可据此判断是否有遗漏变更。
+
+### 离线确认合并
+
+离线设备把回复（含 `clientUpdatedAt`）排队，恢复网络后按时间顺序 POST 到 `/attendance/me/sync`：
+
+1. 相同状态重复回放为 no-op；
+2. 按 `clientUpdatedAt` 做 last-write-wins——较早的离线确认不会覆盖更晚的在线点名；
+3. 已点名（PRESENT/LATE/ABSENT）后，成员回复（CONFIRMED/DECLINED/PENDING）无法把状态改回去；点名状态之间允许组织者用更新时间纠偏；
+4. 同步接口必须携带 `idempotencyKey`，断网重试安全。
+
+### 完成度口径（缺席不能误算）
+
+`/rehearsals/:id/summary` 的完成度只统计当场可核实的任务：
+
+- 明确缺席（`ABSENT`/`DECLINED`）成员名下任务整体排除在分子与分母之外——缺席既不算「未完成」，其自报 DONE 也不会抬高完成度；
+- `SKIPPED` 任务不计入分母；
+- 同时返回按小节数加权的 `barWeightedCompletionRate` 与成员级 `suspectDoneWhileAbsent`（缺席却有 DONE 任务，需排练后核实）；
+- 没有可核实任务时完成度为 `0`（而非误导性的 100%）。
+
 ## 健康检查
 
 | 路径 | 说明 |

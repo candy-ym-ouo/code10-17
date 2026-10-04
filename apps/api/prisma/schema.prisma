@@ -81,6 +81,51 @@ enum GoalStatus {
   CANCELLED
 }
 
+enum EnsembleMemberRole {
+  OWNER
+  CONDUCTOR
+  MEMBER
+}
+
+enum AttendanceStatus {
+  PENDING
+  CONFIRMED
+  DECLINED
+  PRESENT
+  LATE
+  ABSENT
+}
+
+enum RehearsalStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum BarTaskStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  DONE
+  SKIPPED
+}
+
+enum RehearsalNotificationType {
+  REHEARSAL_CREATED
+  REHEARSAL_UPDATED
+  REHEARSAL_CANCELLED
+  MEMBER_ADDED
+  MEMBER_REMOVED
+  ATTENDANCE_UPDATED
+  BAR_TASK_ASSIGNED
+  BAR_TASK_UPDATED
+}
+
+enum NotificationStatus {
+  UNREAD
+  READ
+}
+
 model User {
   id                String           @id @default(uuid()) @db.Uuid
   email             String           @unique @db.VarChar(254)
@@ -100,6 +145,8 @@ model User {
   goalProgresses    GoalProgress[]
   auditLogs         AuditLog[]
   dataExports       DataExport[]
+  ensembleMemberships EnsembleMember[]
+  deliveredNotifications DeliveredNotification[]
 
   @@map("users")
 }
@@ -310,4 +357,156 @@ model AuditLog {
   @@index([userId, createdAt(sort: Desc)])
   @@index([action, createdAt(sort: Desc)])
   @@map("audit_logs")
+}
+
+model Ensemble {
+  id          String             @id @default(uuid()) @db.Uuid
+  ownerId     String             @map("owner_id") @db.Uuid
+  name        String             @db.VarChar(120)
+  description String?
+  version     Int                @default(0)
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  members     EnsembleMember[]
+  rehearsals  Rehearsal[]
+
+  @@index([ownerId])
+  @@map("ensembles")
+}
+
+model EnsembleMember {
+  id          String              @id @default(uuid()) @db.Uuid
+  ensembleId  String              @map("ensemble_id") @db.Uuid
+  userId      String?             @map("user_id") @db.Uuid
+  displayName String              @map("display_name") @db.VarChar(80)
+  instrument  String              @db.VarChar(60)
+  part        String              @db.VarChar(120)
+  role        EnsembleMemberRole  @default(MEMBER)
+  isActive    Boolean             @default(true) @map("is_active")
+  leftAt      DateTime?           @map("left_at") @db.Timestamptz(6)
+  version     Int                 @default(0)
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  ensemble    Ensemble            @relation(fields: [ensembleId], references: [id], onDelete: Cascade)
+  user        User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  attendance  AttendanceRecord[]
+  barTasks    BarTask[]
+
+  @@unique([ensembleId, userId])
+  @@index([userId])
+  @@index([ensembleId, isActive])
+  @@map("ensemble_members")
+}
+
+model Rehearsal {
+  id              String             @id @default(uuid()) @db.Uuid
+  ensembleId      String             @map("ensemble_id") @db.Uuid
+  title           String             @db.VarChar(120)
+  piece           String?            @db.VarChar(160)
+  location        String?            @db.VarChar(120)
+  startsAt        DateTime           @map("starts_at") @db.Timestamptz(6)
+  endsAt          DateTime           @map("ends_at") @db.Timestamptz(6)
+  status          RehearsalStatus    @default(SCHEDULED)
+  notes           String?
+  notificationSeq Int                @default(0) @map("notification_seq")
+  version         Int                @default(0)
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  ensemble        Ensemble           @relation(fields: [ensembleId], references: [id], onDelete: Cascade)
+  attendance      AttendanceRecord[]
+  barTasks        BarTask[]
+  notifications   RehearsalNotification[]
+
+  @@index([ensembleId, startsAt(sort: Desc)])
+  @@index([status, startsAt])
+  @@map("rehearsals")
+}
+
+model AttendanceRecord {
+  id              String           @id @default(uuid()) @db.Uuid
+  rehearsalId     String           @map("rehearsal_id") @db.Uuid
+  memberId        String           @map("member_id") @db.Uuid
+  status          AttendanceStatus @default(PENDING)
+  respondedOffline Boolean         @default(false) @map("responded_offline")
+  respondedAt     DateTime?        @map("responded_at") @db.Timestamptz(6)
+  note            String?          @db.VarChar(500)
+  clientUpdatedAt DateTime?        @map("client_updated_at") @db.Timestamptz(6)
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rehearsal       Rehearsal        @relation(fields: [rehearsalId], references: [id], onDelete: Cascade)
+  member          EnsembleMember   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([rehearsalId, memberId])
+  @@index([memberId, status])
+  @@map("attendance_records")
+}
+
+model BarTask {
+  id           String        @id @default(uuid()) @db.Uuid
+  rehearsalId  String        @map("rehearsal_id") @db.Uuid
+  assigneeId   String?       @map("assignee_id") @db.Uuid
+  startBar     Int           @map("start_bar")
+  endBar       Int           @map("end_bar")
+  title        String        @db.VarChar(160)
+  focus        String?       @db.VarChar(500)
+  status       BarTaskStatus @default(NOT_STARTED)
+  completedAt  DateTime?     @map("completed_at") @db.Timestamptz(6)
+  version      Int           @default(0)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rehearsal    Rehearsal     @relation(fields: [rehearsalId], references: [id], onDelete: Cascade)
+  assignee     EnsembleMember? @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  @@index([rehearsalId, startBar])
+  @@index([assigneeId, status])
+  @@map("bar_tasks")
+}
+
+model RehearsalNotification {
+  id          String                     @id @default(uuid()) @db.Uuid
+  rehearsalId String                     @map("rehearsal_id") @db.Uuid
+  type        RehearsalNotificationType
+  changeSeq   Int                        @map("change_seq")
+  dedupeKey   String                     @unique @map("dedupe_key") @db.VarChar(160)
+  actorId     String?                    @map("actor_id") @db.Uuid
+  title       String                     @db.VarChar(160)
+  body        String?
+  payload     Json?
+  createdAt   DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  rehearsal   Rehearsal                  @relation(fields: [rehearsalId], references: [id], onDelete: Cascade)
+  deliveries  DeliveredNotification[]
+
+  @@index([rehearsalId, changeSeq])
+  @@map("rehearsal_notifications")
+}
+
+model DeliveredNotification {
+  id             String               @id @default(uuid()) @db.Uuid
+  notificationId String               @map("notification_id") @db.Uuid
+  userId         String               @map("user_id") @db.Uuid
+  status         NotificationStatus   @default(UNREAD)
+  readAt         DateTime?            @map("read_at") @db.Timestamptz(6)
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  notification   RehearsalNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, userId])
+  @@index([userId, status, createdAt(sort: Desc)])
+  @@map("delivered_notifications")
+}
+
+/// 客户端幂等键的服务端记录：重试/离线回放时直接回放首次结果。
+model IdempotencyRecord {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  idempotencyKey String @map("idempotency_key") @db.VarChar(80)
+  scope        String   @db.VarChar(160)
+  requestHash  String   @map("request_hash") @db.Char(8)
+  statusCode   Int      @map("status_code")
+  responseBody Json?    @map("response_body")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([userId, scope, idempotencyKey])
+  @@index([createdAt])
+  @@map("idempotency_records")
 }

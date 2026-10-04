@@ -201,6 +201,145 @@ export const createExportSchema = z.object({
   to: z.coerce.date().optional(),
 });
 
+// ---------------------------------------------------------------------------
+// 合奏排练协调
+// ---------------------------------------------------------------------------
+
+export const ENSEMBLE_MEMBER_ROLES = ["OWNER", "CONDUCTOR", "MEMBER"] as const;
+export const ATTENDANCE_STATUSES = ["PENDING", "CONFIRMED", "DECLINED", "PRESENT", "LATE", "ABSENT"] as const;
+export const REHEARSAL_STATUSES = ["SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED"] as const;
+export const BAR_TASK_STATUSES = ["NOT_STARTED", "IN_PROGRESS", "DONE", "SKIPPED"] as const;
+export const REHEARSAL_NOTIFICATION_TYPES = [
+  "REHEARSAL_CREATED",
+  "REHEARSAL_UPDATED",
+  "REHEARSAL_CANCELLED",
+  "MEMBER_ADDED",
+  "MEMBER_REMOVED",
+  "ATTENDANCE_UPDATED",
+  "BAR_TASK_ASSIGNED",
+  "BAR_TASK_UPDATED",
+] as const;
+export const NOTIFICATION_STATUSES = ["UNREAD", "READ"] as const;
+
+/** 排练开始前可由成员自行提交的回复；点名状态只能由组织者写入 */
+export const SELF_ATTENDANCE_STATUSES = ["CONFIRMED", "DECLINED"] as const;
+/** 实际到场状态 */
+export const PRESENT_ATTENDANCE_STATUSES = ["PRESENT", "LATE"] as const;
+/** 明确缺席（请假或点名缺席），其任务绝不能计入完成度分母 */
+export const ABSENT_ATTENDANCE_STATUSES = ["ABSENT", "DECLINED"] as const;
+
+export const ensembleCreateSchema = z.object({
+  name: requiredText("合奏名称", 120),
+  description: optionalText(2000, "合奏简介"),
+});
+export const ensembleUpdateSchema = ensembleCreateSchema
+  .partial()
+  .extend({ version: z.coerce.number().int().nonnegative() });
+
+export const memberCreateSchema = z.object({
+  displayName: requiredText("成员姓名", 80),
+  instrument: requiredText("乐器", 60),
+  part: requiredText("声部", 120),
+  userId: z.string().uuid().optional().nullable(),
+  role: z.enum(ENSEMBLE_MEMBER_ROLES).default("MEMBER"),
+});
+export const memberUpdateSchema = z.object({
+  displayName: requiredText("成员姓名", 80).optional(),
+  instrument: requiredText("乐器", 60).optional(),
+  part: requiredText("声部", 120).optional(),
+  role: z.enum(ENSEMBLE_MEMBER_ROLES).optional(),
+  isActive: z.boolean().optional(),
+  version: z.coerce.number().int().nonnegative(),
+});
+
+const rehearsalBaseSchema = z.object({
+  title: requiredText("排练标题", 120),
+  piece: optionalText(160, "曲目"),
+  location: optionalText(120, "排练地点"),
+  startsAt: z.coerce.date(),
+  endsAt: z.coerce.date(),
+  notes: optionalText(4000, "排练说明"),
+});
+export const rehearsalCreateSchema = rehearsalBaseSchema.refine((value) => value.endsAt > value.startsAt, {
+  path: ["endsAt"],
+  message: "结束时间必须晚于开始时间",
+});
+export const rehearsalUpdateSchema = rehearsalBaseSchema
+  .partial()
+  .extend({ version: z.coerce.number().int().nonnegative() })
+  .refine((value) => value.startsAt === undefined || value.endsAt === undefined || value.endsAt > value.startsAt, {
+    path: ["endsAt"],
+    message: "结束时间必须晚于开始时间",
+  });
+export const rehearsalTransitionSchema = z.object({
+  status: z.enum(REHEARSAL_STATUSES),
+  version: z.coerce.number().int().nonnegative(),
+});
+
+export const idempotencyKeySchema = z.string().trim().min(8).max(80);
+
+export const attendanceResponseSchema = z.object({
+  status: z.enum(ATTENDANCE_STATUSES),
+  note: optionalText(500, "回复备注"),
+  // 离线客户端在本地生成回复的时刻；服务端按此时刻做 last-write-wins 合并
+  clientUpdatedAt: z.coerce.date().optional(),
+  respondedOffline: z.boolean().default(false),
+});
+export const attendanceBatchSchema = z.object({
+  responses: z
+    .array(
+      z.object({
+        memberId: z.string().uuid(),
+        status: z.enum(ATTENDANCE_STATUSES),
+        note: optionalText(500, "回复备注"),
+        clientUpdatedAt: z.coerce.date().optional(),
+        respondedOffline: z.boolean().default(false),
+      }),
+    )
+    .min(1)
+    .max(200),
+  clientUpdatedAt: z.coerce.date().optional(),
+  idempotencyKey: idempotencyKeySchema,
+});
+
+export const rollCallSchema = z.object({
+  status: z.enum([...PRESENT_ATTENDANCE_STATUSES, "ABSENT"]),
+  note: optionalText(500, "点名备注"),
+  idempotencyKey: idempotencyKeySchema,
+});
+
+export const barTaskCreateSchema = z.object({
+  startBar: z.coerce.number().int().min(1).max(10_000),
+  endBar: z.coerce.number().int().min(1).max(10_000),
+  title: requiredText("小节任务标题", 160),
+  focus: optionalText(500, "练习重点"),
+  assigneeId: z.string().uuid().optional().nullable(),
+});
+export const barTaskUpdateSchema = barTaskCreateSchema
+  .partial()
+  .extend({ version: z.coerce.number().int().nonnegative() })
+  .refine((value) => value.startBar === undefined || value.endBar === undefined || value.endBar >= value.startBar, {
+    path: ["endBar"],
+    message: "结束小节不能小于开始小节",
+  });
+export const barTaskStatusSchema = z.object({
+  status: z.enum(BAR_TASK_STATUSES),
+  version: z.coerce.number().int().nonnegative(),
+  idempotencyKey: idempotencyKeySchema,
+});
+
+export const notificationListQuerySchema = z.object({
+  unreadOnly: z.coerce.boolean().default(false),
+  cursor: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(30),
+});
+
+export type EnsembleMemberRole = (typeof ENSEMBLE_MEMBER_ROLES)[number];
+export type AttendanceStatus = (typeof ATTENDANCE_STATUSES)[number];
+export type RehearsalStatus = (typeof REHEARSAL_STATUSES)[number];
+export type BarTaskStatus = (typeof BAR_TASK_STATUSES)[number];
+export type RehearsalNotificationType = (typeof REHEARSAL_NOTIFICATION_TYPES)[number];
+
 export const idSchema = z.string().uuid();
 
 export type SessionStatus = (typeof SESSION_STATUSES)[number];
@@ -279,4 +418,356 @@ export function describeMissingReview(input: {
     missing.push("已有未关闭目标时，本次至少记录一次目标进度");
   }
   return missing;
+}
+
+// ---------------------------------------------------------------------------
+// 合奏排练：领域纯函数
+// ---------------------------------------------------------------------------
+
+export interface AttendanceMergeInput {
+  status: AttendanceStatus;
+  note?: string | null;
+  /** 入站记录期望生效的时间（离线时刻 / 服务器时刻） */
+  clientUpdatedAt?: Date | null;
+  respondedOffline?: boolean;
+}
+export interface StoredAttendanceState extends AttendanceMergeInput {
+  status: AttendanceStatus;
+  note?: string | null;
+  clientUpdatedAt?: Date | null;
+  respondedOffline?: boolean;
+  updatedAt?: Date | null;
+}
+
+const attendanceRank: Record<AttendanceStatus, number> = {
+  PENDING: 0,
+  CONFIRMED: 1,
+  DECLINED: 1,
+  PRESENT: 3,
+  LATE: 3,
+  ABSENT: 3,
+};
+
+function effectiveTime(state: StoredAttendanceState | AttendanceMergeInput): number {
+  return new Date(state.clientUpdatedAt ?? 0).getTime();
+}
+
+/**
+ * 合并到勤回复：
+ * - 同一状态重复提交为幂等 no-op（服务端原始状态原样保留）。
+ * - 默认 last-write-wins（按 clientUpdatedAt，离线确认因此不会覆盖较新的在线点名）。
+ * - 已完成点名（PRESENT/LATE/ABSENT）后，普通成员回复（CONFIRMED/DECLINED/PENDING）
+ *   不能再把实际到勤状态改回去——这是“缺席不能误算完成度”的状态机护栏。
+ * - 点名状态之间允许按时间覆盖（迟到改到场、到场改缺席等纠偏场景）。
+ */
+export function mergeAttendance(
+  current: StoredAttendanceState,
+  incoming: AttendanceMergeInput,
+  now: Date = new Date(),
+): { merged: StoredAttendanceState; changed: boolean } {
+  if (incoming.status === current.status) {
+    return { merged: { ...current }, changed: false };
+  }
+  const currentRank = attendanceRank[current.status];
+  const incomingRank = attendanceRank[incoming.status];
+  if (currentRank >= 3 && incomingRank < 3) {
+    return { merged: { ...current }, changed: false };
+  }
+  const incomingTime = effectiveTime(incoming) || now.getTime();
+  const currentTime = effectiveTime(current) || (current.updatedAt ? new Date(current.updatedAt).getTime() : 0);
+  if (incomingTime < currentTime) {
+    return { merged: { ...current }, changed: false };
+  }
+  return {
+    merged: {
+      ...current,
+      status: incoming.status,
+      note: incoming.note ?? current.note ?? null,
+      clientUpdatedAt: incoming.clientUpdatedAt ?? new Date(incomingTime),
+      respondedOffline: incoming.respondedOffline ?? false,
+    },
+    changed: true,
+  };
+}
+
+export interface RehearsalMember {
+  id: string;
+  displayName: string;
+  instrument: string;
+  part: string;
+  isActive: boolean;
+  attendance?: { status: AttendanceStatus; respondedOffline?: boolean } | null;
+}
+
+export interface RehearsalBarTask {
+  id: string;
+  startBar: number;
+  endBar: number;
+  title: string;
+  status: BarTaskStatus;
+  assigneeId?: string | null;
+}
+
+export interface MemberTaskSummary {
+  memberId: string | null;
+  displayName: string;
+  part: string;
+  instrument: string;
+  attendanceStatus: AttendanceStatus;
+  respondedOffline: boolean;
+  assignedTotal: number;
+  assignedBars: number;
+  doneTotal: number;
+  doneBars: number;
+  /** 缺席且任务为 DONE —— 必须在排练前核实，不计入有效完成 */
+  suspectDoneWhileAbsent: number;
+}
+
+export interface RehearsalSummary {
+  memberCount: number;
+  attendance: Record<AttendanceStatus, number> & {
+    respondedOffline: number;
+    presentTotal: number;
+    missingTotal: number;
+  };
+  parts: Array<{ part: string; instrument: string; members: number; present: number; absent: number; pending: number }>;
+  tasks: {
+    total: number;
+    done: number;
+    inProgress: number;
+    notStarted: number;
+    skipped: number;
+    totalBars: number;
+    doneBars: number;
+    /**
+     * 完成度口径：只统计当场可核实的任务——
+     * 明确缺席（ABSENT/DECLINED）成员名下的任务整体排除在分子分母之外，
+     * 既不会因为缺席被算成“未完成”，缺席者自报 DONE 也不会抬高完成度。
+     * SKIPPED 同样不计入分母。
+     */
+    accountableTotal: number;
+    accountableDone: number;
+    completionRate: number;
+    barWeightedCompletionRate: number;
+  };
+  /** 点名缺失的成员：PENDING/CONFIRMED/DECLINED 都需要现场核实 */
+  unresolvedMembers: string[];
+  members: MemberTaskSummary[];
+}
+
+export function isAbsentStatus(status: AttendanceStatus): boolean {
+  return (ABSENT_ATTENDANCE_STATUSES as readonly string[]).includes(status);
+}
+
+export function isPresentStatus(status: AttendanceStatus): boolean {
+  return (PRESENT_ATTENDANCE_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * 汇总一次排练：成员声部、到齐状态与小节任务。
+ * 缺席成员的任务不进入完成度口径，避免“缺席被误算成完成/未完成”。
+ */
+export function summarizeRehearsal(members: RehearsalMember[], tasks: RehearsalBarTask[]): RehearsalSummary {
+  const activeMembers = members.filter((member) => member.isActive);
+  const memberById = new Map(activeMembers.map((member) => [member.id, member]));
+
+  const attendanceCounts = {
+    PENDING: 0,
+    CONFIRMED: 0,
+    DECLINED: 0,
+    PRESENT: 0,
+    LATE: 0,
+    ABSENT: 0,
+  } as Record<AttendanceStatus, number>;
+  let respondedOffline = 0;
+  const unresolved: string[] = [];
+
+  for (const member of activeMembers) {
+    const status: AttendanceStatus = member.attendance?.status ?? "PENDING";
+    attendanceCounts[status] += 1;
+    if (member.attendance?.respondedOffline) respondedOffline += 1;
+    if (!isPresentStatus(status) && status !== "ABSENT") unresolved.push(member.id);
+  }
+
+  const partMap = new Map<string, { part: string; instrument: string; members: number; present: number; absent: number; pending: number }>();
+  for (const member of activeMembers) {
+    const key = `${member.part}::${member.instrument}`;
+    const entry = partMap.get(key) ?? { part: member.part, instrument: member.instrument, members: 0, present: 0, absent: 0, pending: 0 };
+    const status = member.attendance?.status ?? "PENDING";
+    entry.members += 1;
+    if (isPresentStatus(status)) entry.present += 1;
+    if (isAbsentStatus(status)) entry.absent += 1;
+    if (status === "PENDING") entry.pending += 1;
+    partMap.set(key, entry);
+  }
+
+  const perMember = new Map<string, MemberTaskSummary>();
+  const placeholder: MemberTaskSummary = {
+    memberId: null,
+    displayName: "未分配",
+    part: "-",
+    instrument: "-",
+    attendanceStatus: "PENDING",
+    respondedOffline: false,
+    assignedTotal: 0,
+    assignedBars: 0,
+    doneTotal: 0,
+    doneBars: 0,
+    suspectDoneWhileAbsent: 0,
+  };
+
+  let done = 0;
+  let inProgress = 0;
+  let notStarted = 0;
+  let skipped = 0;
+  let totalBars = 0;
+  let doneBars = 0;
+  let accountableTotal = 0;
+  let accountableDone = 0;
+  let accountableTotalBars = 0;
+  let accountableDoneBars = 0;
+
+  for (const task of tasks) {
+    const bars = Math.max(0, task.endBar - task.startBar + 1);
+    totalBars += bars;
+    if (task.status === "DONE") done += 1;
+    if (task.status === "IN_PROGRESS") inProgress += 1;
+    if (task.status === "NOT_STARTED") notStarted += 1;
+    if (task.status === "SKIPPED") skipped += 1;
+    if (task.status === "DONE") doneBars += bars;
+
+    const assignee = task.assigneeId ? memberById.get(task.assigneeId) : undefined;
+    const assigneeStatus: AttendanceStatus = assignee?.attendance?.status ?? "PENDING";
+    const assigneeAbsent = assignee ? isAbsentStatus(assigneeStatus) : false;
+    const key = assignee?.id ?? "__unassigned__";
+    let row = perMember.get(key);
+    if (!row) {
+      row = assignee
+        ? {
+            memberId: assignee.id,
+            displayName: assignee.displayName,
+            part: assignee.part,
+            instrument: assignee.instrument,
+            attendanceStatus: assigneeStatus,
+            respondedOffline: assignee.attendance?.respondedOffline ?? false,
+            assignedTotal: 0,
+            assignedBars: 0,
+            doneTotal: 0,
+            doneBars: 0,
+            suspectDoneWhileAbsent: 0,
+          }
+        : { ...placeholder };
+      perMember.set(key, row);
+    }
+    row.assignedTotal += 1;
+    row.assignedBars += bars;
+    if (task.status === "DONE") {
+      row.doneTotal += 1;
+      row.doneBars += bars;
+      if (assigneeAbsent) row.suspectDoneWhileAbsent += 1;
+    }
+
+    // 完成度：缺席成员的任务与 SKIPPED 任务一律不进口径
+    if (!assigneeAbsent && task.status !== "SKIPPED") {
+      accountableTotal += 1;
+      accountableTotalBars += bars;
+      if (task.status === "DONE") {
+        accountableDone += 1;
+        accountableDoneBars += bars;
+      }
+    }
+  }
+
+  // 没有任务的成员也出现在明细里
+  for (const member of activeMembers) {
+    if (!perMember.has(member.id)) {
+      perMember.set(member.id, {
+        memberId: member.id,
+        displayName: member.displayName,
+        part: member.part,
+        instrument: member.instrument,
+        attendanceStatus: member.attendance?.status ?? "PENDING",
+        respondedOffline: member.attendance?.respondedOffline ?? false,
+        assignedTotal: 0,
+        assignedBars: 0,
+        doneTotal: 0,
+        doneBars: 0,
+        suspectDoneWhileAbsent: 0,
+      });
+    }
+  }
+
+  const presentTotal = attendanceCounts.PRESENT + attendanceCounts.LATE;
+  return {
+    memberCount: activeMembers.length,
+    attendance: {
+      ...attendanceCounts,
+      respondedOffline,
+      presentTotal,
+      missingTotal: activeMembers.length - presentTotal,
+    },
+    parts: [...partMap.values()].sort((a, b) => a.part.localeCompare(b.part, "zh-Hans-CN")),
+    tasks: {
+      total: tasks.length,
+      done,
+      inProgress,
+      notStarted,
+      skipped,
+      totalBars,
+      doneBars,
+      accountableTotal,
+      accountableDone,
+      completionRate: accountableTotal === 0 ? 0 : accountableDone / accountableTotal,
+      barWeightedCompletionRate: accountableTotalBars === 0 ? 0 : accountableDoneBars / accountableTotalBars,
+    },
+    unresolvedMembers: unresolved,
+    members: [...perMember.values()].sort((a, b) => b.assignedTotal - a.assignedTotal || a.displayName.localeCompare(b.displayName, "zh-Hans-CN")),
+  };
+}
+
+/**
+ * 通知幂等键：同一 (排练, 变更类型, 变更实体, 变更序号) 只发一次。
+ * 重复提交（重试、双击、离线回放）携带相同内容哈希时命中唯一约束，绝不重复通知。
+ */
+export function buildNotificationDedupeKey(input: {
+  rehearsalId: string;
+  type: RehearsalNotificationType;
+  entityId?: string | null;
+  /** 内容指纹：参与字段排序序列化后的短哈希，内容不变则不重复通知 */
+  contentHash: string;
+}): string {
+  const entity = input.entityId ?? "rehearsal";
+  return `${input.rehearsalId}:${input.type}:${entity}:${input.contentHash}`.slice(0, 160);
+}
+
+/** 稳定的内容指纹（FNV-1a 32 位，无第三方依赖） */
+export function stableContentHash(value: unknown): string {
+  const json = stableStringify(value);
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < json.length; i += 1) {
+    hash ^= json.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(",")}}`;
+}
+
+/** 排练状态机允许的迁移 */
+const rehearsalTransitions: Record<RehearsalStatus, RehearsalStatus[]> = {
+  SCHEDULED: ["IN_PROGRESS", "CANCELLED", "SCHEDULED"],
+  IN_PROGRESS: ["COMPLETED", "CANCELLED", "IN_PROGRESS"],
+  COMPLETED: ["IN_PROGRESS", "COMPLETED"],
+  CANCELLED: ["SCHEDULED", "CANCELLED"],
+};
+
+export function canTransitionRehearsal(from: RehearsalStatus, to: RehearsalStatus): boolean {
+  return from === to || rehearsalTransitions[from].includes(to);
 }

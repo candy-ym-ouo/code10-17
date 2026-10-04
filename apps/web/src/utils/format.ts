@@ -66,3 +66,31 @@ export const goalStatusLabels = {
   MISSED: "已逾期",
   CANCELLED: "已取消",
 } as const;
+
+export const attendanceLabels = {
+  PENDING: "待回复",
+  CONFIRMED: "确认参加",
+  DECLINED: "已请假",
+  PRESENT: "已到场",
+  LATE: "迟到",
+  ABSENT: "缺席",
+} as const;
+
+export const rehearsalStatusLabels = {
+  SCHEDULED: "已安排",
+  IN_PROGRESS: "排练中",
+  COMPLETED: "已结束",
+  CANCELLED: "已取消",
+} as const;
+
+export const barTaskStatusLabels = {
+  NOT_STARTED: "未开始",
+  IN_PROGRESS: "进行中",
+  DONE: "已完成",
+  SKIPPED: "已跳过",
+} as const;
+
+export function formatPercent(value: number): string {
+  if (!Number.isFinite(value)) return "0%";
+  return `${Math.round(value * 100)}%`;
+}
